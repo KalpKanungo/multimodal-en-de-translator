@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 from transformers import (
     MarianMTModel,
     MarianTokenizer,
@@ -15,18 +14,15 @@ from tokenize_dataset import tokenize_dataset
 MODEL_NAME = "Helsinki-NLP/opus-mt-en-de"
 OUTPUT_DIR = "./models/marian_finetuned"
 
-device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-
 
 def main():
 
     print("Preparing dataset...")
-    dataset = load_and_prepare_dataset(sample_size=20000)
+    dataset = load_and_prepare_dataset(sample_size=50000)
     tokenized_datasets = tokenize_dataset(dataset)
 
     print("Loading model...")
-    model = MarianMTModel.from_pretrained(MODEL_NAME).to(device)
-
+    model = MarianMTModel.from_pretrained(MODEL_NAME)
     tokenizer = MarianTokenizer.from_pretrained(MODEL_NAME)
 
     data_collator = DataCollatorForSeq2Seq(
@@ -36,17 +32,17 @@ def main():
 
     training_args = TrainingArguments(
         output_dir=OUTPUT_DIR,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
-        num_train_epochs=2,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=16,
+        num_train_epochs=5,
         learning_rate=3e-5,
         weight_decay=0.01,
-        eval_strategy="epoch",
+        evaluation_strategy="epoch",
         save_strategy="epoch",
         logging_steps=100,
         save_total_limit=2,
         load_best_model_at_end=True,
-        fp16=False,
+        fp16=True,
         report_to="none"
     )
 
