@@ -17,3 +17,4 @@ models/
 
 # Checkpoints
 checkpoint-*/
+models/
