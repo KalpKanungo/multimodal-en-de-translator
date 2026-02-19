@@ -1,3 +1,4 @@
+import re
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from backend.model import load_models
@@ -5,7 +6,6 @@ from backend.model import load_models
 
 class Translator:
     def __init__(self):
-
         self.device = torch.device("cpu")
         self.translation_models = load_models()
 
@@ -24,7 +24,6 @@ class Translator:
         self.lang_model.eval()
 
     def detect_language(self, text: str):
-
         inputs = self.lang_tokenizer(
             text,
             return_tensors="pt",
@@ -48,43 +47,55 @@ class Translator:
 
         return predicted_lang.lower()
 
-    def translate(self, text):
+    def _translate_sentence(self, sentence: str, tokenizer, model) -> str:
+        """Translate a single sentence using fixed hyperparameters."""
+        inputs = tokenizer(
+            sentence,
+            return_tensors="pt",
+            truncation=True,
+            padding=True
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=128,      # enough room for full translation
+                min_new_tokens=1,        # never force extra tokens — stops hallucination
+                num_beams=5,             # slightly more beams = better quality
+                early_stopping=True,
+                no_repeat_ngram_size=3,  # hard block on repeating any 3-word phrase
+                repetition_penalty=1.3,  # strongly penalize repeated tokens
+                length_penalty=0.8,      # favour concise output
+            )
+
+        return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+    def translate(self, text: str):
         if not text.strip():
             return {"error": "Empty input"}
 
+        # --- Detect language ---
         detected_lang = self.detect_language(text)
 
         if detected_lang not in ["en", "de"]:
             detected_lang = "en"
 
         direction = "en-de" if detected_lang == "en" else "de-en"
-
         tokenizer, model = self.translation_models[direction]
 
-        inputs = tokenizer(
-            text,
-            return_tensors="pt",
-            truncation=True,
-            padding=True
-        )
+        # --- Split into sentences and translate each one ---
+        # This preserves sentence order and prevents hallucination on long inputs
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
 
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        translated_sentences = []
+        for sentence in sentences:
+            if not sentence.strip():
+                continue
+            translated = self._translate_sentence(sentence, tokenizer, model)
+            translated_sentences.append(translated)
 
-        with torch.no_grad():
-            outputs = model.generate(
-                        **inputs,
-                        max_new_tokens=80,
-                        num_beams=5,
-                        length_penalty=0.8,
-                        early_stopping=False
-                    )
-
-        translation = tokenizer.decode(
-            outputs[0],
-            skip_special_tokens=True
-        )
-
+        translation = " ".join(translated_sentences)
         token_length = len(text.split())
 
         return {
