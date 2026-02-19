@@ -16,4 +16,3 @@ accelerate
 sacremoses
 soundfile
 librosa
-TTS
