@@ -1,11 +1,19 @@
+# macOS
+.DS_Store
+
+# Python
 __pycache__/
 *.pyc
-.env
-results/
-backend/models/
-*.zip
+
+# HuggingFace cache
+.cache/
+
+# Models
+models/
 *.pt
+*.pth
 *.bin
 *.safetensors
-*.wav
-*.mp3
+
+# Checkpoints
+checkpoint-*/
