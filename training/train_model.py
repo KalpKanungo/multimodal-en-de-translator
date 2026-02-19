@@ -37,7 +37,7 @@ def main():
         num_train_epochs=5,
         learning_rate=3e-5,
         weight_decay=0.01,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         logging_steps=100,
         save_total_limit=2,
