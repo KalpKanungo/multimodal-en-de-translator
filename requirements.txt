@@ -16,3 +16,5 @@ accelerate
 sacremoses
 soundfile
 librosa
+edge-tts
+nltk
