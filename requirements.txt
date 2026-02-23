@@ -7,7 +7,7 @@ sacrebleu
 sentencepiece 
 matplotlib
 seaborn
-gradio==5.23.0
+gradio
 pandas 
 numpy 
 scikit-learn
