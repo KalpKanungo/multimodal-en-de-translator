@@ -115,14 +115,6 @@ class Translator:
     # Attention: run model and collect all cross-attention layers
     # ------------------------------------------------------------------
     def _get_attention_data(self, text: str, direction: str):
-        """
-        Returns:
-            translation       : str
-            input_tokens      : list[str]
-            output_tokens     : list[str]
-            all_layers_avg    : list[np.ndarray]  one (tgt, src) array per layer
-            last_layer_avg    : np.ndarray  averaged over heads, last layer
-        """
         tokenizer, model = self.translation_models[direction]
 
         inputs = tokenizer(
@@ -134,38 +126,42 @@ class Translator:
             outputs = model.generate(
                 **inputs,
                 max_new_tokens=100,
-                num_beams=1,               # greedy — required for attention output
+                num_beams=1,
+                do_sample=False,
                 output_attentions=True,
                 return_dict_in_generate=True,
             )
+
+        # Safety check — if attention is None fall back gracefully
+        if outputs.cross_attentions is None or len(outputs.cross_attentions) == 0:
+            raise ValueError("Model did not return attention weights. Try a shorter input.")
 
         translation = tokenizer.decode(
             outputs.sequences[0], skip_special_tokens=True
         )
 
-        # cross_attentions: tuple of decoder steps
-        # each step: tuple of layers
-        # each layer: tensor (batch, heads, 1, src_len)
-        cross_attentions = outputs.cross_attentions  # (steps, layers, ...)
-
+        cross_attentions = outputs.cross_attentions
         num_layers = len(cross_attentions[0])
         num_steps  = len(cross_attentions)
 
-        # Build (layer, tgt_step, src) by averaging over heads
-        # Result shape per layer: (num_steps, src_len)
         layers_attn = []
         for layer_idx in range(num_layers):
             layer_steps = []
             for step in range(num_steps):
-                # (batch=1, heads, 1, src_len) -> (src_len,)
-                step_attn = cross_attentions[step][layer_idx][0].mean(0)[0]
+                step_attn = cross_attentions[step][layer_idx]
+                if step_attn is None:
+                    continue
+                step_attn = step_attn[0].mean(0)[0]
                 layer_steps.append(step_attn.cpu().numpy())
-            layers_attn.append(np.array(layer_steps))  # (tgt, src)
+            if layer_steps:
+                layers_attn.append(np.array(layer_steps))
+
+        if not layers_attn:
+            raise ValueError("Could not extract attention weights from model output.")
 
         input_tokens  = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
-        output_tokens = tokenizer.convert_ids_to_tokens(outputs.sequences[0][1:])  # skip decoder start
+        output_tokens = tokenizer.convert_ids_to_tokens(outputs.sequences[0][1:])
 
-        # Clean up tokens for display
         input_tokens  = [t.replace("▁", " ").strip() for t in input_tokens]
         output_tokens = [t.replace("▁", " ").strip() for t in output_tokens]
 
