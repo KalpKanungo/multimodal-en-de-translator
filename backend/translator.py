@@ -122,45 +122,42 @@ class Translator:
         )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
+        # Step 1: Get translation normally
         with torch.no_grad():
-            outputs = model.generate(
+            generated = model.generate(
                 **inputs,
                 max_new_tokens=100,
                 num_beams=1,
                 do_sample=False,
-                output_attentions=True,
-                return_dict_in_generate=True,
             )
 
-        # Safety check — if attention is None fall back gracefully
-        if outputs.cross_attentions is None or len(outputs.cross_attentions) == 0:
-            raise ValueError("Model did not return attention weights. Try a shorter input.")
+        translation = tokenizer.decode(generated[0], skip_special_tokens=True)
 
-        translation = tokenizer.decode(
-            outputs.sequences[0], skip_special_tokens=True
-        )
+        # Step 2: Forward pass manually to extract cross-attention reliably
+        decoder_input_ids = generated[:, :-1]
 
-        cross_attentions = outputs.cross_attentions
-        num_layers = len(cross_attentions[0])
-        num_steps  = len(cross_attentions)
+        with torch.no_grad():
+            forward_out = model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                decoder_input_ids=decoder_input_ids,
+                output_attentions=True,
+                return_dict=True,
+            )
 
+        cross_attentions = forward_out.cross_attentions
+
+        if cross_attentions is None or len(cross_attentions) == 0:
+            raise ValueError("Model did not return attention weights.")
+
+        # Average over heads per layer -> (tgt_len, src_len)
         layers_attn = []
-        for layer_idx in range(num_layers):
-            layer_steps = []
-            for step in range(num_steps):
-                step_attn = cross_attentions[step][layer_idx]
-                if step_attn is None:
-                    continue
-                step_attn = step_attn[0].mean(0)[0]
-                layer_steps.append(step_attn.cpu().numpy())
-            if layer_steps:
-                layers_attn.append(np.array(layer_steps))
-
-        if not layers_attn:
-            raise ValueError("Could not extract attention weights from model output.")
+        for layer_attn in cross_attentions:
+            avg = layer_attn[0].mean(0).cpu().numpy()
+            layers_attn.append(avg)
 
         input_tokens  = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
-        output_tokens = tokenizer.convert_ids_to_tokens(outputs.sequences[0][1:])
+        output_tokens = tokenizer.convert_ids_to_tokens(generated[0][1:])
 
         input_tokens  = [t.replace("▁", " ").strip() for t in input_tokens]
         output_tokens = [t.replace("▁", " ").strip() for t in output_tokens]
