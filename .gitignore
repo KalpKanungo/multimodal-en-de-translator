@@ -17,4 +17,11 @@ models/
 
 # Checkpoints
 checkpoint-*/
-models/
+
+# App outputs
+static/
+tts_outputs/
+evaluation_outputs/
+
+# Env
+.env

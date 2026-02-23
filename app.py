@@ -3,34 +3,58 @@ from backend.translator import Translator
 from backend.asr import ASR
 from backend.tts import TTS
 from backend.evaluator import Evaluator
+from backend.ocr import OCR
 
 translator  = Translator()
 asr         = ASR()
 tts_engine  = TTS()
 evaluator   = Evaluator()
+ocr_engine  = OCR()
 
 
 # ------------------------------------------------------------------
 # Handler: Translator tab
 # ------------------------------------------------------------------
-def process_input(text, audio):
+def process_input(text, audio, image):
+    """
+    Priority order: text > audio > image
+    Whichever input is provided first gets used.
+    """
     if text and text.strip():
         input_text = text
+        source = "text"
+
     elif audio is not None:
         input_text = asr.transcribe(audio)
+        source = "audio"
+        if not input_text or not input_text.strip():
+            return "Could not transcribe audio. Please try again.", None, ""
+
+    elif image is not None:
+        image_path = image.name  # gr.File returns an object with .name = filepath
+        input_text = ocr_engine.extract_text(image_path)
+        source = "image"
+        if not input_text or not input_text.strip():
+            return "No text detected in image. Please try a clearer image.", None, ""
+
     else:
-        return "", None
+        return "Please provide text, audio, or an image.", None, ""
 
     result = translator.translate(input_text)
 
     if "error" in result:
-        return result["error"], None
+        return result["error"], None, ""
 
     translated_text = result["translation"]
     target_lang     = "de" if result["direction"] == "en-de" else "en"
     audio_file      = tts_engine.synthesize(translated_text, target_lang)
 
-    return translated_text, audio_file
+    detected        = result["detected_language"].upper()
+    confidence      = result["confidence"]
+    direction_arrow = "English → German" if result["direction"] == "en-de" else "German → English"
+    status          = f"Detected: {detected} ({confidence}% confidence)  |  {direction_arrow}  |  Input: {source}"
+
+    return translated_text, audio_file, status
 
 
 # ------------------------------------------------------------------
@@ -46,81 +70,81 @@ def process_with_attention(text):
     return translation, heatmap_path, layer_grid_path
 
 
-# ------------------------------------------------------------------
-# Handler: Evaluation Dashboard tab
-# ------------------------------------------------------------------
+#
 def process_evaluation(input_text, reference_text):
-    """
-    Translates input_text, then evaluates the output against
-    the user-provided reference translation using BLEU + confidence.
-    Resets every time (no session history).
-    """
     if not input_text or not input_text.strip():
-        return "Please enter input text.", "", "", "", "", ""
+        return "Please enter input text.", "", "", ""
 
     if not reference_text or not reference_text.strip():
-        return "Please provide a reference translation to compute BLEU.", "", "", "", "", ""
+        return "Please provide a reference translation to compute BLEU.", "", "", ""
 
-    # --- Translate ---
     result = translator.translate(input_text)
 
     if "error" in result:
-        return result["error"], "", "", "", "", ""
+        return result["error"], "", "", ""
 
     translation = result["translation"]
-    confidence  = result["confidence"]   # already 0–100
+    confidence  = result["confidence"]
     direction   = result["direction"]
 
-    # --- Evaluate ---
     metrics = evaluator.evaluate(
         reference=reference_text,
         hypothesis=translation,
         confidence=confidence
     )
 
-    direction_label = "English → German" if direction == "en-de" else "German → English"
-
+    direction_label    = "English → German" if direction == "en-de" else "German → English"
     bleu_display       = f"{metrics['bleu_percent']}%  ({metrics['bleu_label']})"
     confidence_display = f"{metrics['confidence']}%  ({metrics['confidence_label']})"
 
-    return (
-        translation,
-        direction_label,
-        bleu_display,
-        confidence_display,
-    )
+    return translation, direction_label, bleu_display, confidence_display
 
 
-# ------------------------------------------------------------------
-# Gradio UI
-# ------------------------------------------------------------------
 with gr.Blocks(title="English–German Translator") as app:
 
     gr.Markdown("# 🌐 Multimodal English–German Translator")
 
-    # ── Tab 1: Translator ─────────────────────────────────────────
+    
     with gr.Tab("Translator"):
-        gr.Markdown("### Translate text or speech between English and German")
+        gr.Markdown(
+            "### Translate between English and German\n"
+            "Input can be **typed text**, **recorded/uploaded audio**, or an **image** "
+            "containing text (signboards, textbooks, screenshots, handwriting)."
+        )
 
         with gr.Row():
             with gr.Column():
-                text_input    = gr.Textbox(label="Text Input", lines=4,
-                                           placeholder="Type English or German here…")
-                audio_input   = gr.Audio(label="Or record / upload audio",
-                                         type="filepath")
+                text_input  = gr.Textbox(
+                    label="Text Input",
+                    lines=4,
+                    placeholder="Type English or German here…"
+                )
+                audio_input = gr.Audio(
+                    label="Audio Input — record or upload",
+                    type="filepath"
+                )
+                image_input = gr.File(
+                    label="Image Input — signboard, textbook, screenshot, handwriting (JPG, PNG, HEIC)",
+                    file_types=["image", ".heic", ".heif"]
+                )
                 translate_btn = gr.Button("Translate", variant="primary")
 
             with gr.Column():
+                status_output = gr.Textbox(
+                    label="Detection Info",
+                    interactive=False,
+                    lines=1
+                )
                 output_text  = gr.Textbox(label="Translated Output", lines=4)
                 output_audio = gr.Audio(label="Speech Output")
 
         translate_btn.click(
             process_input,
-            inputs=[text_input, audio_input],
-            outputs=[output_text, output_audio],
+            inputs=[text_input, audio_input, image_input],
+            outputs=[output_text, output_audio, status_output],
         )
 
-    # ── Tab 2: Attention Visualizer ───────────────────────────────
+    
     with gr.Tab("Attention Visualizer"):
         gr.Markdown(
             "### Cross-Attention Visualizer\n"
@@ -136,8 +160,9 @@ with gr.Blocks(title="English–German Translator") as app:
                 )
                 attn_btn = gr.Button("Translate + Visualize Attention",
                                      variant="primary")
-                attn_translation = gr.Textbox(label="Translation Output",
-                                              lines=3, interactive=False)
+                attn_translation = gr.Textbox(
+                    label="Translation Output", lines=3, interactive=False
+                )
 
             with gr.Column(scale=2):
                 gr.Markdown("#### Last Layer — Cross-Attention Heatmap")
@@ -146,16 +171,18 @@ with gr.Blocks(title="English–German Translator") as app:
                     "Each column is an input token. "
                     "Brighter = stronger attention."
                 )
-                heatmap_output = gr.Image(label="Cross-Attention Heatmap",
-                                          type="filepath")
+                heatmap_output = gr.Image(
+                    label="Cross-Attention Heatmap", type="filepath"
+                )
 
         gr.Markdown("#### All Decoder Layers — Attention Grid")
         gr.Markdown(
             "Each panel shows attention weights for one decoder layer. "
             "Early layers tend to attend broadly; later layers focus more precisely."
         )
-        layer_grid_output = gr.Image(label="Layer-by-Layer Attention",
-                                     type="filepath")
+        layer_grid_output = gr.Image(
+            label="Layer-by-Layer Attention", type="filepath"
+        )
 
         attn_btn.click(
             process_with_attention,
@@ -165,7 +192,6 @@ with gr.Blocks(title="English–German Translator") as app:
 
     # ── Tab 3: Evaluation Dashboard ───────────────────────────────
     with gr.Tab("Evaluation Dashboard"):
-
         gr.Markdown("### 📊 Translation Evaluation Dashboard")
         gr.Markdown(
             "Enter your text and a **reference translation** (what you expect the correct "
@@ -175,26 +201,21 @@ with gr.Blocks(title="English–German Translator") as app:
         with gr.Row():
             with gr.Column():
                 eval_input = gr.Textbox(
-                    label="Input Text",
-                    lines=4,
+                    label="Input Text", lines=4,
                     placeholder="Type English or German text to translate…"
                 )
                 eval_reference = gr.Textbox(
-                    label="Reference Translation",
-                    lines=4,
+                    label="Reference Translation", lines=4,
                     placeholder="Type the expected correct translation here…"
                 )
                 eval_btn = gr.Button("Evaluate", variant="primary")
 
             with gr.Column():
                 eval_translation = gr.Textbox(
-                    label="Model's Translation",
-                    lines=4,
-                    interactive=False
+                    label="Model's Translation", lines=4, interactive=False
                 )
                 eval_direction = gr.Textbox(
-                    label="Detected Direction",
-                    interactive=False
+                    label="Detected Direction", interactive=False
                 )
 
         gr.Markdown("#### Metrics")

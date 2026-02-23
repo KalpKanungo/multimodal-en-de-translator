@@ -18,3 +18,5 @@ soundfile
 librosa
 edge-tts
 nltk
+easyocr
+pillow-heif
