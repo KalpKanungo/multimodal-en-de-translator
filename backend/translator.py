@@ -117,6 +117,9 @@ class Translator:
     def _get_attention_data(self, text: str, direction: str):
         tokenizer, model = self.translation_models[direction]
 
+        # Switch to eager attention to support output_attentions
+        model.config._attn_implementation = "eager"
+
         inputs = tokenizer(
             text, return_tensors="pt", truncation=True, padding=True
         )
@@ -133,7 +136,7 @@ class Translator:
 
         translation = tokenizer.decode(generated[0], skip_special_tokens=True)
 
-        # Step 2: Forward pass manually to extract cross-attention reliably
+        # Step 2: Forward pass to extract cross-attention
         decoder_input_ids = generated[:, :-1]
 
         with torch.no_grad():
@@ -150,7 +153,6 @@ class Translator:
         if cross_attentions is None or len(cross_attentions) == 0:
             raise ValueError("Model did not return attention weights.")
 
-        # Average over heads per layer -> (tgt_len, src_len)
         layers_attn = []
         for layer_attn in cross_attentions:
             avg = layer_attn[0].mean(0).cpu().numpy()
