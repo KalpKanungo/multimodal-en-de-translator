@@ -247,4 +247,4 @@ with gr.Blocks(title="English–German Translator") as app:
             ],
         )
 
-app.launch(share=True)
+app.launch()
